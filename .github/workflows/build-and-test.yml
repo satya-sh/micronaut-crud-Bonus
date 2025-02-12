@@ -1,0 +1,92 @@
+name: Build and Test with MySQL
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_DATABASE: mn_playground
+          MYSQL_ROOT_PASSWORD: Airjorda7
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -uroot -pAirjorda7" 
+          --health-interval 10s 
+          --health-timeout 5s 
+          --health-retries 3
+
+    env:
+      DATASOURCES_DEFAULT_URL: "jdbc:mysql://127.0.0.1:3306/mn_playground?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&autoReconnect=true"
+      DATASOURCES_DEFAULT_USERNAME: "root"
+      DATASOURCES_DEFAULT_PASSWORD: "Airjorda7"
+
+    steps:
+      - name: Test MySQL Connection
+        run: | 
+          mysql -h 127.0.0.1 -uroot -pAirjorda7 -e "SHOW DATABASES;" mn_playground
+
+      - name: Check out code
+        uses: actions/checkout@v3
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v3
+        with:
+          java-version: 21
+          distribution: temurin
+          cache: gradle
+
+      - name: Grant permission to execute gradlew
+        run: chmod +x gradlew
+
+      - name: Build and run tests
+        run: ./gradlew clean build
+
+      - name: Merge to main if successful
+        if: ${{ success() && github.ref != 'refs/heads/main' }}
+        run: |
+          git config --global user.name 'GitHub Actions Bot'
+          git config --global user.email '<>'
+          git fetch --prune --unshallow || true
+          BRANCH_NAME=${GITHUB_REF#refs/heads/}
+          echo "Merging branch '$BRANCH_NAME' into main..."
+          git fetch origin main
+          git checkout main
+          git merge -s recursive -X theirs "$BRANCH_NAME" -m "Auto-merge from $BRANCH_NAME" --allow-unrelated-histories
+          git push origin main
+
+      - name: Upload Jar Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: micronaut-crud-jar
+          path: build/libs/*.jar
+
+      - name: Checkout main branch for release
+        uses: actions/checkout@v3
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Download Jar Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: micronaut-crud-jar
+          path: build/libs/
+
+      - name: Create GitHub Release
+        if: ${{ success() && github.ref != 'refs/heads/main' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: Release v${{ github.run_number }}
+          files: build/libs/*.jar
+          make_latest: true
+          draft: false
+          prerelease: false
